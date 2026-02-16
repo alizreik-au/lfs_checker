@@ -1,4 +1,4 @@
 @echo off
 cd /d "%~dp0.."
-python src\lfs_checker.py
+powershell -NoProfile -ExecutionPolicy Bypass -File "src\LfsChecker.ps1" %*
 if errorlevel 1 pause

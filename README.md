@@ -1,6 +1,6 @@
 # LFS Checker
 
-A small Python app that checks a Git repo for **missing LFS objects** and shows which files they belong to.
+A small **PowerShell** app (modern Windows Forms GUI) that checks a Git repo for **missing LFS objects** and shows which files they belong to. Runs natively on Windows with no Python required.
 
 ## What it does
 
@@ -9,8 +9,9 @@ A small Python app that checks a Git repo for **missing LFS objects** and shows 
 - It checks whether each object exists in `.git/lfs/objects/`.
 - It lists every file that points to a missing LFS object, with its OID.
 - It also lists **local assets not in LFS**: files that match `.gitattributes` LFS patterns but are real files (not LFS pointers).
+- **Add & commit** local-only assets to LFS, then **Push to remote**.
 
-**Views:** Default is **Simple** (sortable tables). Switch to **Detailed** to see full OID hashes in a text view. On Windows, the app requests DPI awareness for a sharp (non-blurry) window.
+**Views:** Default is **Simple** (DataGridView tables). Switch to **Detailed** to see full OID hashes in a text view. UI uses a modern flat style (Segoe UI, accent buttons, light theme).
 
 ## Repo layout
 
@@ -18,19 +19,20 @@ A small Python app that checks a Git repo for **missing LFS objects** and shows 
 lfs_checker/
 ├── RunMe.bat              # Quick launcher (double‑click to run GUI)
 ├── README.md
-├── requirements.txt
 ├── bin/                   # Launchers
-│   ├── RunMe.bat
+│   ├── RunMe.bat          # Launches PowerShell LFS Checker GUI
 │   ├── RunLfsChecker.bat
 │   └── RunLfsIdLookup.bat
-├── src/                   # Python app and CLIs
-│   ├── lfs_checker.py     # Main GUI
+├── src/                   # PowerShell GUI + core; optional Python CLIs
+│   ├── LfsChecker.ps1     # Main GUI (Windows Forms)
+│   ├── LfsCheckerCore.ps1 # LFS logic (dot-sourced by GUI and runspaces)
+│   ├── lfs_checker.py     # Legacy Python GUI (optional)
 │   ├── check_lfs.py       # CLI: missing + local not in LFS
 │   └── check_not_in_lfs.py # CLI: only "files not in LFS"
 ├── scripts/
 │   └── FindLfsObject.ps1  # LFS object ID lookup (PowerShell GUI)
 ├── assets/
-│   └── lfs.svg            # Logo (optional)
+│   └── lfs.svg            # Logo (optional, used by Python GUI)
 └── install/
     ├── Install-LFS-Checker.ps1
     ├── Install-LFS-Checker.bat
@@ -42,29 +44,19 @@ lfs_checker/
 
 **From repo root (easiest):** double‑click `RunMe.bat` or run:
 
-```bash
+```batch
 cd lfs_checker
 bin\RunMe.bat
 ```
 
-Or run the GUI directly:
+Or run the PowerShell GUI directly (optional repo path argument):
 
-```bash
-cd lfs_checker
-python src\lfs_checker.py
+```powershell
+powershell -ExecutionPolicy Bypass -File "src\LfsChecker.ps1"
+powershell -ExecutionPolicy Bypass -File "src\LfsChecker.ps1" "C:\path\to\repo"
 ```
 
-From anywhere:
-
-```bash
-python path\to\lfs_checker\src\lfs_checker.py
-```
-
-Core app uses only the standard library. For the **LFS logo** in the window, install optional deps:
-
-```bash
-pip install -r requirements.txt
-```
+**Requirements:** Windows, PowerShell 5.1+, Git (and Git LFS for push). No Python needed for the main GUI.
 
 ## CLI: only “files not in LFS”
 
@@ -90,4 +82,5 @@ install\Install-LFS-Checker.bat
 
 ## Requirements
 
-- Python 3.7+
+- **PowerShell 5.1+** (Windows; built-in). Git (and Git LFS for push).
+- Optional: **Python 3.7+** for the legacy `lfs_checker.py` GUI and CLI scripts (`check_lfs.py`, `check_not_in_lfs.py`).
