@@ -1,0 +1,36 @@
+Windows Registry Editor Version 5.00
+
+; "Find LFS object by ID" - when right-clicking a folder OR when right-clicking in the empty area inside a folder
+; TEMPLATE: install via Install-LFS-Checker.bat, or edit paths below (use double backslashes).
+
+[HKEY_CLASSES_ROOT\Folder\shell\LFS_IdLookup]
+@="Find LFS object by ID"
+"Icon"="C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+
+[HKEY_CLASSES_ROOT\Folder\shell\LFS_IdLookup\command]
+@="\"C:\\Users\\USERNAME\\AppData\\Local\\LFS-Checker\\RunLfsIdLookup.bat\" \"%1\""
+
+[HKEY_CLASSES_ROOT\Directory\Background\shell\LFS_IdLookup]
+@="Find LFS object by ID"
+"Icon"="C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+"NoWorkingDirectory"=""
+
+[HKEY_CLASSES_ROOT\Directory\Background\shell\LFS_IdLookup\command]
+@="\"C:\\Users\\USERNAME\\AppData\\Local\\LFS-Checker\\RunLfsIdLookup.bat\" \"%V\""
+
+; Run LFS Checker (GUI) - folder or background
+
+[HKEY_CLASSES_ROOT\Folder\shell\LFS_Checker]
+@="Run LFS Checker"
+"Icon"="C:\\Windows\\System32\\shell32.dll,22"
+
+[HKEY_CLASSES_ROOT\Folder\shell\LFS_Checker\command]
+@="\"C:\\Users\\USERNAME\\AppData\\Local\\LFS-Checker\\RunLfsChecker.bat\" \"%1\""
+
+[HKEY_CLASSES_ROOT\Directory\Background\shell\LFS_Checker]
+@="Run LFS Checker"
+"Icon"="C:\\Windows\\System32\\shell32.dll,22"
+"NoWorkingDirectory"=""
+
+[HKEY_CLASSES_ROOT\Directory\Background\shell\LFS_Checker\command]
+@="\"C:\\Users\\USERNAME\\AppData\\Local\\LFS-Checker\\RunLfsChecker.bat\" \"%V\""

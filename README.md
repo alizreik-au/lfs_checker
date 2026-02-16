@@ -1,0 +1,93 @@
+# LFS Checker
+
+A small Python app that checks a Git repo for **missing LFS objects** and shows which files they belong to.
+
+## What it does
+
+- You pick a repo folder (must contain a `.git` directory).
+- It finds all Git LFS pointer files in the repo.
+- It checks whether each object exists in `.git/lfs/objects/`.
+- It lists every file that points to a missing LFS object, with its OID.
+- It also lists **local assets not in LFS**: files that match `.gitattributes` LFS patterns but are real files (not LFS pointers).
+
+**Views:** Default is **Simple** (sortable tables). Switch to **Detailed** to see full OID hashes in a text view. On Windows, the app requests DPI awareness for a sharp (non-blurry) window.
+
+## Repo layout
+
+```
+lfs_checker/
+├── RunMe.bat              # Quick launcher (double‑click to run GUI)
+├── README.md
+├── requirements.txt
+├── bin/                   # Launchers
+│   ├── RunMe.bat
+│   ├── RunLfsChecker.bat
+│   └── RunLfsIdLookup.bat
+├── src/                   # Python app and CLIs
+│   ├── lfs_checker.py     # Main GUI
+│   ├── check_lfs.py       # CLI: missing + local not in LFS
+│   └── check_not_in_lfs.py # CLI: only "files not in LFS"
+├── scripts/
+│   └── FindLfsObject.ps1  # LFS object ID lookup (PowerShell GUI)
+├── assets/
+│   └── lfs.svg            # Logo (optional)
+└── install/
+    ├── Install-LFS-Checker.ps1
+    ├── Install-LFS-Checker.bat
+    ├── Add-LFS-Context-Menu.bat
+    └── Add_LFS_IdLookup_Context_Menu.reg  # Template
+```
+
+## Run it
+
+**From repo root (easiest):** double‑click `RunMe.bat` or run:
+
+```bash
+cd lfs_checker
+bin\RunMe.bat
+```
+
+Or run the GUI directly:
+
+```bash
+cd lfs_checker
+python src\lfs_checker.py
+```
+
+From anywhere:
+
+```bash
+python path\to\lfs_checker\src\lfs_checker.py
+```
+
+Core app uses only the standard library. For the **LFS logo** in the window, install optional deps:
+
+```bash
+pip install -r requirements.txt
+```
+
+## CLI: only “files not in LFS”
+
+On another PC (or without the GUI), use the CLI script to list files that **match .gitattributes LFS patterns but are real files**, not LFS pointers:
+
+```bash
+# From repo root (or any path inside the repo)
+python path\to\lfs_checker\src\check_not_in_lfs.py
+
+# Or specify repo path
+python path\to\lfs_checker\src\check_not_in_lfs.py C:\path\to\repo
+```
+
+Copy only `src/check_not_in_lfs.py` to the other PC; it uses the repo’s `.gitattributes` and needs no other files. Exit code 0 = none found, 1 = some files are not in LFS.
+
+## Install (Windows)
+
+To install into `%LOCALAPPDATA%\LFS-Checker` and optionally add folder right‑click context menus:
+
+```bash
+install\Install-LFS-Checker.bat
+```
+
+## Requirements
+
+- Python 3.7+
