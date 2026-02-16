@@ -1,7 +1,9 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Installs LFS Checker and LFS Object Lookup to the user's AppData\Local\LFS-Checker.
+    Installs or updates LFS Checker and LFS Object Lookup to the user's AppData\Local\LFS-Checker.
+.DESCRIPTION
+    On update, existing installed files are removed so the folder exactly matches the current release (no leftover obsolete files).
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -9,24 +11,22 @@ $ErrorActionPreference = 'Stop'
 $script:SourceDir = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $InstallDir = Join-Path -Path $env:LOCALAPPDATA -ChildPath 'LFS-Checker'
 
-# Source paths (repo layout) -> flat destination name
+# Source paths (repo layout) -> flat destination name (all files go into one folder)
 $CopyMap = @(
+    @{ Src = 'src\LfsChecker.ps1'; Dest = 'LfsChecker.ps1' },
+    @{ Src = 'src\LfsCheckerCore.ps1'; Dest = 'LfsCheckerCore.ps1' },
     @{ Src = 'src\lfs_checker.py'; Dest = 'lfs_checker.py' },
     @{ Src = 'src\check_lfs.py'; Dest = 'check_lfs.py' },
     @{ Src = 'src\check_not_in_lfs.py'; Dest = 'check_not_in_lfs.py' },
     @{ Src = 'scripts\FindLfsObject.ps1'; Dest = 'FindLfsObject.ps1' },
     @{ Src = 'assets\lfs.svg'; Dest = 'lfs.svg' },
-    @{ Src = 'bin\RunMe.bat'; Dest = 'RunMe.bat' },
-    @{ Src = 'bin\RunLfsChecker.bat'; Dest = 'RunLfsChecker.bat' },
-    @{ Src = 'bin\RunLfsIdLookup.bat'; Dest = 'RunLfsIdLookup.bat' },
-    @{ Src = 'install\Add-LFS-Context-Menu.bat'; Dest = 'Add-LFS-Context-Menu.bat' },
     @{ Src = 'requirements.txt'; Dest = 'requirements.txt' },
     @{ Src = 'README.md'; Dest = 'README.md' }
 )
 
 Write-Host "LFS Checker Installer" -ForegroundColor Cyan
 Write-Host "=====================" -ForegroundColor Cyan
-Write-Host "Install to: $InstallDir" -ForegroundColor White
+Write-Host "Install/update to: $InstallDir" -ForegroundColor White
 Write-Host ""
 
 if (-not (Test-Path -LiteralPath $SourceDir -PathType Container)) {
@@ -34,12 +34,14 @@ if (-not (Test-Path -LiteralPath $SourceDir -PathType Container)) {
     exit 1
 }
 
-# Create install directory
-if (-not (Test-Path -LiteralPath $InstallDir -PathType Container)) {
+# Create or clean install directory (on update, delete existing contents so we don't keep obsolete files)
+if (Test-Path -LiteralPath $InstallDir -PathType Container) {
+    Write-Host "Updating existing installation: removing old files..." -ForegroundColor Gray
+    Get-ChildItem -LiteralPath $InstallDir -Force | Remove-Item -Recurse -Force
+    Write-Host "  Cleared: $InstallDir" -ForegroundColor Green
+} else {
     New-Item -Path $InstallDir -ItemType Directory -Force | Out-Null
     Write-Host "Created: $InstallDir" -ForegroundColor Green
-} else {
-    Write-Host "Directory exists: $InstallDir" -ForegroundColor Gray
 }
 
 # Copy files
@@ -53,6 +55,75 @@ foreach ($entry in $CopyMap) {
         Write-Host "  Skipped (not found): $($entry.Src)" -ForegroundColor Yellow
     }
 }
+
+# Write install-specific launchers (run from install dir using %~dp0; LfsChecker.ps1 expects to find LfsCheckerCore.ps1 in same folder)
+$batRunMe = @"
+@echo off
+cd /d "%~dp0"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0LfsChecker.ps1" %*
+if errorlevel 1 pause
+"@
+Set-Content -LiteralPath (Join-Path $InstallDir 'RunMe.bat') -Value $batRunMe -Encoding ASCII
+Write-Host "  Created: RunMe.bat (launches LFS Checker GUI)" -ForegroundColor Green
+
+$batRunLfsChecker = @"
+@echo off
+cd /d "%~dp0"
+if "%~1"=="" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0LfsChecker.ps1"
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0LfsChecker.ps1" "%~1"
+)
+if errorlevel 1 pause
+"@
+Set-Content -LiteralPath (Join-Path $InstallDir 'RunLfsChecker.bat') -Value $batRunLfsChecker -Encoding ASCII
+Write-Host "  Created: RunLfsChecker.bat (GUI with optional repo path)" -ForegroundColor Green
+
+$batRunLfsIdLookup = @"
+@echo off
+cd /d "%~dp0"
+set "SCRIPT=%~dp0FindLfsObject.ps1"
+set "REPO=%~1"
+if "%REPO%"=="" (
+    start "LFS Object Lookup" cmd /k "cd /d ""%~dp0"" && powershell -NoProfile -ExecutionPolicy Bypass -File ""%~dp0FindLfsObject.ps1"""
+    exit /b 0
+)
+if "%~2"=="" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -RepoPath "%REPO%"
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -RepoPath "%REPO%" -OID "%~2"
+)
+if errorlevel 1 pause
+"@
+Set-Content -LiteralPath (Join-Path $InstallDir 'RunLfsIdLookup.bat') -Value $batRunLfsIdLookup -Encoding ASCII
+Write-Host "  Created: RunLfsIdLookup.bat" -ForegroundColor Green
+
+$batAddContext = @"
+@echo off
+set "REGFILE=%LOCALAPPDATA%\LFS-Checker\Add_LFS_IdLookup_Context_Menu.reg"
+if not exist "%REGFILE%" (
+    echo Add_LFS_IdLookup_Context_Menu.reg not found at %REGFILE%
+    echo Run Install-LFS-Checker first to install and create the reg file.
+    pause
+    exit /b 1
+)
+echo Adding LFS context menus (Find LFS object by ID + Run LFS Checker)...
+echo You may be prompted for Administrator approval.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath 'reg.exe' -ArgumentList 'import', \"\"\"%REGFILE%\"\"\" -Verb RunAs -Wait"
+if errorlevel 1 (
+    echo Failed. Right-click Add_LFS_IdLookup_Context_Menu.reg and choose Merge, then accept UAC.
+    pause
+    exit /b 1
+)
+echo Done.
+echo.
+echo On Windows 11: right-click a folder (or empty area), then "Show more options" to see:
+echo   - Find LFS object by ID
+echo   - Run LFS Checker
+pause
+"@
+Set-Content -LiteralPath (Join-Path $InstallDir 'Add-LFS-Context-Menu.bat') -Value $batAddContext -Encoding ASCII
+Write-Host "  Created: Add-LFS-Context-Menu.bat" -ForegroundColor Green
 
 # Write context menu .reg with installed path (backslashes doubled for .reg format)
 $regPath = $InstallDir -replace '\\', '\\\\'
