@@ -92,6 +92,7 @@ def investigate(
             "actionsTaken": actions,
             "nextSteps": ["Run from inside a Git repository (folder containing .git)."],
         }
+        write_json(report_path, report)
         return ("not_a_git_repo", report)
 
     report: dict[str, Any] = {
@@ -117,6 +118,7 @@ def investigate(
             next_steps.append("Wait for any in-progress git operation to finish, then rerun.")
             if not saw_git_process:
                 next_steps.append("If you believe the lock is stale, rerun with --remove-stale-lock.")
+            write_json(report_path, report)
             return (report["classification"], report)  # type: ignore[return-value]
         actions.append("waited for index.lock to clear")
 
@@ -127,6 +129,7 @@ def investigate(
         except OSError:
             report["classification"] = "repo_dirty_lock"
             next_steps.append("Could not remove .git/index.lock. Remove it manually if stale.")
+            write_json(report_path, report)
             return ("repo_dirty_lock", report)
 
     # Phase 1: sync + branch context
@@ -139,6 +142,7 @@ def investigate(
     if fetch.exit_code != 0:
         report["classification"] = "auth_or_permissions"
         next_steps.append("Check your network/VPN and authentication, then rerun.")
+        write_json(report_path, report)
         return ("auth_or_permissions", report)
 
     # Determine refspec
@@ -147,6 +151,7 @@ def investigate(
     if not refspec:
         report["classification"] = "unknown_push_failure"
         next_steps.append("Detached HEAD or no branch; provide --refspec explicitly.")
+        write_json(report_path, report)
         return ("unknown_push_failure", report)
 
     # Phase 2: primary probe
@@ -187,7 +192,12 @@ def investigate(
     # Phase 4: policy check
     allow = read_lfs_allow_incomplete_push(repo_root)
     report["lfsAllowIncompletePush"] = allow
-    if allow is True and report["dryRunPush"]["missingCount"] > 0 and push_probe.exit_code == 0:
+    # If incomplete pushes are allowed, a dry-run can "succeed" while still listing missing objects.
+    if (
+        allow is True
+        and report["dryRunPush"]["missingCount"] > 0
+        and report["dryRunPush"]["exitCode"] == 0
+    ):
         report["pushSucceededButLfsIncomplete"] = True
 
     report["classification"] = classification
