@@ -15,6 +15,14 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Optional
 
+# Runbook-aligned push diagnostics (unattended pipeline helpers)
+from runbook_probe import (
+    classify_push_output,
+    get_ahead_behind,
+    parse_missing_pairs,
+    read_lfs_allow_incomplete_push,
+)
+
 # Enable DPI awareness on Windows for sharp rendering (before any GUI)
 def _enable_dpi_awareness() -> None:
     if sys.platform != "win32":
@@ -323,6 +331,7 @@ class LfsCheckerApp:
 
         self.repo_path = tk.StringVar()
         self.view_mode = tk.StringVar(value=self.VIEW_SIMPLE)
+        self.allow_real_push = tk.BooleanVar(value=False)
         self._stop_requested = threading.Event()
         self._last_missing: list[tuple[str, str]] = []
         self._last_local_not_lfs: list[str] = []
@@ -370,8 +379,13 @@ class LfsCheckerApp:
         self.check_local_btn.pack(side=tk.LEFT, padx=(0, 8))
         self.commit_btn = ttk.Button(btn_row, text="Add & commit", command=self._run_commit)
         self.commit_btn.pack(side=tk.LEFT, padx=(0, 8))
-        self.push_btn = ttk.Button(btn_row, text="Push to remote", command=self._run_push)
+        self.push_btn = ttk.Button(btn_row, text="Diagnose push (dry-run)", command=self._run_push)
         self.push_btn.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Checkbutton(
+            btn_row,
+            text="Enable real push (dangerous)",
+            variable=self.allow_real_push,
+        ).pack(side=tk.LEFT, padx=(4, 8))
         self.stop_btn = ttk.Button(btn_row, text="Stop", command=self._on_stop)
         self.stop_btn.pack(side=tk.LEFT, padx=(0, 8))
         self.stop_btn.state(["disabled"])
@@ -682,7 +696,15 @@ class LfsCheckerApp:
         return (remote, branch)
 
     def _do_push(self, repo_root: Path) -> None:
-        """Push LFS objects and refs to remote (no add/commit)."""
+        """
+        Run runbook-aligned diagnostics by default:
+        - git fetch
+        - git push --dry-run -v
+
+        If the user explicitly enables real push, and diagnostics allow it, then:
+        - git lfs push --all
+        - git push
+        """
         log: list[str] = []
         try:
             rb = self._get_remote_and_branch(repo_root, log)
@@ -692,6 +714,101 @@ class LfsCheckerApp:
             remote, branch = rb
             log.append(f"Branch: {branch}, remote: {remote}\n")
 
+            # Phase 1: fetch remote
+            ok = self._git_run(repo_root, ["fetch", remote], log)
+            if not ok:
+                self.root.after(0, lambda: self._push_done(False, "\n".join(log)))
+                return
+
+            # Branch context (best effort)
+            ab = get_ahead_behind(repo_root)
+            if ab:
+                log.append(f"Ahead/behind vs upstream: +{ab['ahead']} / -{ab['behind']}\n")
+
+            # Phase 2: dry-run probe (primary signal)
+            refspec = f"HEAD:refs/heads/{branch}"
+            cmd = ["push", "--dry-run", "-v", remote, refspec]
+            # Use _git_output to capture stdout, but still want stderr in log; so run via _git_run-like path
+            r = subprocess.run(
+                ["git"] + cmd,
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                timeout=600,
+                check=False,
+            )
+            log.append("$ git " + " ".join(cmd) + "\n")
+            combined = ""
+            if r.stdout:
+                log.append(r.stdout.strip() + "\n")
+                combined += r.stdout + "\n"
+            if r.stderr:
+                log.append(r.stderr.strip() + "\n")
+                combined += r.stderr + "\n"
+            if r.returncode != 0:
+                log.append(f"Exit code: {r.returncode}\n")
+
+            missing = parse_missing_pairs(combined, max_items=200)
+            classification = classify_push_output(combined, exit_code=r.returncode)
+            allow_incomplete = read_lfs_allow_incomplete_push(repo_root)
+
+            log.append("\n--- Runbook classification ---\n")
+            log.append(f"classification: {classification}\n")
+            if allow_incomplete is not None:
+                log.append(f"lfs.allowincompletepush: {allow_incomplete}\n")
+            if missing:
+                log.append(f"missingCount: {len(missing)}\n")
+                for item in missing[:25]:
+                    log.append(f"  (missing) {item['path']} ({item['oid']})\n")
+                if len(missing) > 25:
+                    log.append(f"  ... truncated ({len(missing) - 25} more)\n")
+            else:
+                log.append("missingCount: 0\n")
+
+            # Default is diagnostic-only success (even if classification is non-ok).
+            # Only attempt real push if explicitly enabled.
+            if not self.allow_real_push.get():
+                ok_diag = classification == "ok" or classification != "unknown_push_failure"
+                self.root.after(0, lambda: self._push_done(ok_diag, "\n".join(log)))
+                return
+
+            # Real push guardrails
+            if classification == "lfs_missing_local_objects" and allow_incomplete is not True:
+                self.root.after(
+                    0,
+                    lambda: self._push_done(
+                        False,
+                        "\n".join(log)
+                        + "\nReal push blocked: LFS missing objects detected. Fix missing objects (or explicitly allow incomplete pushes) before pushing.",
+                    ),
+                )
+                return
+
+            # If allowincompletepush is true, still ask for explicit consent when missing is present.
+            if allow_incomplete is True and missing:
+                def _ask_and_continue() -> None:
+                    proceed = messagebox.askyesno(
+                        "Real push (degraded)",
+                        "Dry-run detected missing LFS objects, but lfs.allowincompletepush=true.\n"
+                        "Proceed with a real push anyway? This may push refs while leaving LFS objects missing for others.",
+                    )
+                    if not proceed:
+                        self._push_done(False, "\n".join(log) + "\nCancelled real push.")
+                        return
+                    threading.Thread(target=self._do_real_push, args=(repo_root, remote, branch, log), daemon=True).start()
+
+                self.root.after(0, _ask_and_continue)
+                return
+
+            # Safe-ish path: no missing objects detected (or classification ok)
+            threading.Thread(target=self._do_real_push, args=(repo_root, remote, branch, log), daemon=True).start()
+        except Exception as e:
+            log.append(str(e))
+            self.root.after(0, lambda: self._push_done(False, "\n".join(log)))
+
+    def _do_real_push(self, repo_root: Path, remote: str, branch: str, log: list[str]) -> None:
+        """Perform the actual push steps (runs in a background thread)."""
+        try:
             ok = self._git_run(repo_root, ["lfs", "push", remote, branch, "--all"], log)
             if not ok:
                 self.root.after(0, lambda: self._push_done(False, "\n".join(log)))

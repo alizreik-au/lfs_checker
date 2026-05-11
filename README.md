@@ -80,6 +80,35 @@ python path\to\lfs_checker\src\check_not_in_lfs.py C:\path\to\repo
 
 Copy only `src/check_not_in_lfs.py` to the other PC; it uses the repo’s `.gitattributes` and needs no other files. Exit code 0 = none found, 1 = some files are not in LFS.
 
+## Unattended runbook: investigate LFS push failures
+
+This repo also includes an unattended, runbook-aligned investigator that performs:
+
+- `git fetch`
+- `git push --dry-run -v` (primary probe)
+- regex classification and `(missing) <path> (<oid>)` extraction
+- optional `git lfs fsck` + `git lfs fetch --recent` + `git lfs pull` when LFS missing objects are detected
+- writes a JSON report
+
+Run:
+
+```bash
+python src\investigate_lfs_push.py [repo_path] --remote origin --report lfs_check_report.json
+```
+
+Or double-click:
+
+- `bin\RunInvestigateLfsPush.bat`
+
+### Exit codes (per runbook)
+
+- `0`: no issues detected
+- `10`: LFS missing/corrupt local objects
+- `20`: non-fast-forward / behind upstream
+- `30`: auth/permissions
+- `40`: repo locked (`.git/index.lock`)
+- `50`: unknown/unclassified failure
+
 ## Install (Windows)
 
 To install into `%LOCALAPPDATA%\LFS-Checker` and optionally add folder right‑click context menus:
