@@ -21,7 +21,9 @@ from runbook_probe import (
     get_ahead_behind,
     parse_missing_pairs,
     read_lfs_allow_incomplete_push,
+    run_git,
 )
+from runbook_wizard_gui import RunbookWizard, ToolTip
 
 # Enable DPI awareness on Windows for sharp rendering (before any GUI)
 def _enable_dpi_awareness() -> None:
@@ -366,9 +368,10 @@ class LfsCheckerApp:
         row = ttk.Frame(main)
         row.pack(fill=tk.X, pady=8)
         ttk.Label(row, text="Repo folder:", width=12).pack(side=tk.LEFT, padx=(0, 8))
-        entry = ttk.Entry(row, textvariable=self.repo_path, width=50)
-        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
-        ttk.Button(row, text="Browse…", command=self._browse).pack(side=tk.LEFT)
+        self.repo_entry = ttk.Entry(row, textvariable=self.repo_path, width=50)
+        self.repo_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        self.browse_btn = ttk.Button(row, text="Browse…", command=self._browse)
+        self.browse_btn.pack(side=tk.LEFT)
 
         # Buttons + view mode
         btn_row = ttk.Frame(main)
@@ -381,30 +384,39 @@ class LfsCheckerApp:
         self.commit_btn.pack(side=tk.LEFT, padx=(0, 8))
         self.push_btn = ttk.Button(btn_row, text="Diagnose push (dry-run)", command=self._run_push)
         self.push_btn.pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Checkbutton(
+        self.runbook_wizard_btn = ttk.Button(
+            btn_row,
+            text="Runbook (step-by-step)…",
+            command=self._open_runbook_wizard,
+        )
+        self.runbook_wizard_btn.pack(side=tk.LEFT, padx=(0, 8))
+        self.allow_real_push_cb = ttk.Checkbutton(
             btn_row,
             text="Enable real push (dangerous)",
             variable=self.allow_real_push,
-        ).pack(side=tk.LEFT, padx=(4, 8))
+        )
+        self.allow_real_push_cb.pack(side=tk.LEFT, padx=(4, 8))
         self.stop_btn = ttk.Button(btn_row, text="Stop", command=self._on_stop)
         self.stop_btn.pack(side=tk.LEFT, padx=(0, 8))
         self.stop_btn.state(["disabled"])
         ttk.Separator(btn_row, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=12)
         ttk.Label(btn_row, text="View:").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Radiobutton(
+        self.view_simple_rb = ttk.Radiobutton(
             btn_row,
             text="Simple (table)",
             variable=self.view_mode,
             value=self.VIEW_SIMPLE,
             command=self._on_view_changed,
-        ).pack(side=tk.LEFT, padx=2)
-        ttk.Radiobutton(
+        )
+        self.view_simple_rb.pack(side=tk.LEFT, padx=2)
+        self.view_detailed_rb = ttk.Radiobutton(
             btn_row,
             text="Detailed (with hashes)",
             variable=self.view_mode,
             value=self.VIEW_DETAILED,
             command=self._on_view_changed,
-        ).pack(side=tk.LEFT, padx=2)
+        )
+        self.view_detailed_rb.pack(side=tk.LEFT, padx=2)
         self.status_var = tk.StringVar(value="Choose a repo folder, then run one or both checks.")
         ttk.Label(btn_row, textvariable=self.status_var, foreground="gray").pack(
             side=tk.LEFT, padx=(12, 0)
@@ -420,8 +432,8 @@ class LfsCheckerApp:
         )
         # Don't pack the bar initially; _show_progress() / _hide_progress() toggle it
 
-        # Log area (scan progress; local repo only, no remote)
-        log_frame = ttk.LabelFrame(main, text="Log (local scan only, no remote)")
+        # Log area (local scans + optional notes; remote actions log in dialogs / runbook wizard)
+        log_frame = ttk.LabelFrame(main, text="Log (local scans; use Runbook wizard for step-by-step remote checks)")
         log_frame.pack(fill=tk.X, pady=(6, 0))
         self.log_text = tk.Text(log_frame, height=5, font=("Consolas", 9), wrap=tk.WORD, state=tk.DISABLED)
         self.log_text.pack(fill=tk.X, padx=4, pady=4)
@@ -481,12 +493,75 @@ class LfsCheckerApp:
         # Show default view (Simple)
         self.simple_frame.pack(fill=tk.BOTH, expand=True)
         self.detailed_frame.pack_forget()
+        self._install_tooltips()
+
+    def _install_tooltips(self) -> None:
+        ToolTip(
+            self.repo_entry,
+            "Path to your game or project folder. It can be anywhere inside the repo; the app finds the root that contains .git.",
+        )
+        ToolTip(self.browse_btn, "Open a folder picker to choose the repository directory.")
+        ToolTip(
+            self.check_missing_btn,
+            "Scans the working tree for Git LFS pointer files and checks whether each object's blob exists under .git/lfs/objects. Does not contact the network.",
+        )
+        ToolTip(
+            self.check_local_btn,
+            "Finds files that match .gitattributes LFS patterns but are stored as normal files instead of LFS pointers (often needs git add + commit after fixing).",
+        )
+        ToolTip(
+            self.commit_btn,
+            "Runs git add on each path listed under “Local assets not in LFS”, then commits with a fixed message. Does not push.",
+        )
+        ToolTip(
+            self.push_btn,
+            "Runs git fetch and a verbose dry-run push to classify push/LFS issues from output. Does not push unless you enable real push and pass guardrails.",
+        )
+        ToolTip(
+            self.runbook_wizard_btn,
+            "Opens the full runbook: index lock, fetch, branch context, dry-run push, optional LFS fsck/fetch/pull, policy read, and JSON report — one human-confirmed step at a time.",
+        )
+        ToolTip(
+            self.allow_real_push_cb,
+            "When checked, after diagnostics succeed (or you confirm degraded push), runs git lfs push --all and a real git push. Can change the remote; use only when you intend to publish.",
+        )
+        ToolTip(self.stop_btn, "Requests the local folder scan to stop as soon as possible (does not stop the runbook wizard).")
+        ToolTip(self.view_simple_rb, "Shows two sortable tables: missing LFS blobs and local files that should be pointers.")
+        ToolTip(self.view_detailed_rb, "Shows the same results as plain text with full OID lines for copy/paste.")
+        ToolTip(
+            self.log_text,
+            "Progress messages for local scans (pointer walk, .gitignore filtering). Remote/git command logs appear in popups or the runbook wizard output.",
+        )
+
+    def _open_runbook_wizard(self) -> None:
+        path = self.repo_path.get().strip()
+        if not path or not os.path.isdir(path):
+            messagebox.showinfo("No repo", "Choose a repo folder first.", parent=self.root)
+            return
+        repo_root = find_git_root(Path(path))
+        if not repo_root:
+            messagebox.showerror("Not a Git repo", "No .git found.", parent=self.root)
+            return
+        self.repo_path.set(str(repo_root))
+        log: list[str] = []
+        rb = self._get_remote_and_branch(repo_root, log)
+        remote = rb[0] if rb else "origin"
+        refspec = f"HEAD:refs/heads/{rb[1]}" if rb else None
+        report_path = repo_root / "lfs_check_report.json"
+        RunbookWizard(
+            self.root,
+            repo_path=repo_root,
+            remote=remote,
+            refspec=refspec,
+            report_path=report_path,
+            max_missing=200,
+            remove_stale_lock=False,
+            lock_wait_s=15,
+        )
 
     def _show_progress(self) -> None:
         self.progress_bar.pack(fill=tk.X)
         self.progress_bar.start(50)
-
-    def _hide_progress(self) -> None:
         self.progress_bar.stop()
         self.progress_bar.pack_forget()
 
@@ -611,6 +686,7 @@ class LfsCheckerApp:
         self.check_local_btn.state(["disabled"])
         self.commit_btn.state(["disabled"])
         self.push_btn.state(["disabled"])
+        self.runbook_wizard_btn.state(["disabled"])
         self.status_var.set("Adding & committing…")
         self._show_progress()
         threading.Thread(target=self._do_commit, args=(repo_root,), daemon=True).start()
@@ -641,9 +717,13 @@ class LfsCheckerApp:
         self.check_local_btn.state(["!disabled"])
         self.commit_btn.state(["!disabled"])
         self.push_btn.state(["!disabled"])
+        self.runbook_wizard_btn.state(["!disabled"])
         self.status_var.set("Commit finished." if success else "Commit failed.")
         if success:
-            messagebox.showinfo("Add & commit", "Local assets committed to LFS. Verify, then use Push to remote when ready.\n\n" + log_text)
+            messagebox.showinfo(
+                "Add & commit",
+                "Local assets committed to LFS. Verify, then use Diagnose push or the Runbook wizard when ready.\n\n" + log_text,
+            )
         else:
             messagebox.showerror("Add & commit", "Commit failed.\n\n" + log_text)
 
@@ -661,7 +741,8 @@ class LfsCheckerApp:
         self.check_local_btn.state(["disabled"])
         self.commit_btn.state(["disabled"])
         self.push_btn.state(["disabled"])
-        self.status_var.set("Pushing…")
+        self.runbook_wizard_btn.state(["disabled"])
+        self.status_var.set("Diagnosing push…")
         self._show_progress()
         threading.Thread(target=self._do_push, args=(repo_root,), daemon=True).start()
 
@@ -728,25 +809,15 @@ class LfsCheckerApp:
             # Phase 2: dry-run probe (primary signal)
             refspec = f"HEAD:refs/heads/{branch}"
             cmd = ["push", "--dry-run", "-v", remote, refspec]
-            # Use _git_output to capture stdout, but still want stderr in log; so run via _git_run-like path
-            r = subprocess.run(
-                ["git"] + cmd,
-                cwd=str(repo_root),
-                capture_output=True,
-                text=True,
-                timeout=600,
-                check=False,
-            )
+            r = run_git(repo_root, cmd, timeout_s=600)
             log.append("$ git " + " ".join(cmd) + "\n")
-            combined = ""
             if r.stdout:
-                log.append(r.stdout.strip() + "\n")
-                combined += r.stdout + "\n"
+                log.append(r.stdout + "\n")
             if r.stderr:
-                log.append(r.stderr.strip() + "\n")
-                combined += r.stderr + "\n"
+                log.append(r.stderr + "\n")
             if r.returncode != 0:
                 log.append(f"Exit code: {r.returncode}\n")
+            combined = r.combined_text()
 
             missing = parse_missing_pairs(combined, max_items=200)
             classification = classify_push_output(combined, exit_code=r.returncode)
@@ -871,11 +942,12 @@ class LfsCheckerApp:
         self.check_local_btn.state(["!disabled"])
         self.commit_btn.state(["!disabled"])
         self.push_btn.state(["!disabled"])
-        self.status_var.set("Push finished." if success else "Push failed.")
+        self.runbook_wizard_btn.state(["!disabled"])
+        self.status_var.set("Diagnose push finished." if success else "Diagnose push finished with issues.")
         if success:
-            messagebox.showinfo("Push to remote", "Push completed.\n\n" + log_text)
+            messagebox.showinfo("Diagnose push", "Finished.\n\n" + log_text)
         else:
-            messagebox.showerror("Push to remote", "Push failed.\n\n" + log_text)
+            messagebox.showerror("Diagnose push", "Finished with issues.\n\n" + log_text)
 
     def _run_check_missing(self) -> None:
         path = self.repo_path.get().strip()
@@ -956,6 +1028,7 @@ class LfsCheckerApp:
         self.check_local_btn.state(["!disabled"])
         self.commit_btn.state(["!disabled"])
         self.push_btn.state(["!disabled"])
+        self.runbook_wizard_btn.state(["!disabled"])
         self._last_missing = missing
         self.log_text.config(state=tk.NORMAL)
         self.log_text.delete("1.0", tk.END)
@@ -979,6 +1052,7 @@ class LfsCheckerApp:
         self.check_local_btn.state(["!disabled"])
         self.commit_btn.state(["!disabled"])
         self.push_btn.state(["!disabled"])
+        self.runbook_wizard_btn.state(["!disabled"])
         self._last_local_not_lfs = local_not_lfs
         self.log_text.config(state=tk.NORMAL)
         self.log_text.delete("1.0", tk.END)
@@ -998,6 +1072,7 @@ class LfsCheckerApp:
         self.check_local_btn.state(["!disabled"])
         self.commit_btn.state(["!disabled"])
         self.push_btn.state(["!disabled"])
+        self.runbook_wizard_btn.state(["!disabled"])
         self.status_var.set("Error.")
         messagebox.showerror("LFS Checker", _safe_display(msg))
         if self.view_mode.get() == self.VIEW_DETAILED:

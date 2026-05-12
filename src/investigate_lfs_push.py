@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from runbook_interactive import run_interactive_cli
 from runbook_probe import (
     Classification,
     classify_push_output,
@@ -228,20 +229,36 @@ def main() -> None:
     p.add_argument("--max-missing", type=int, default=200, help="Max missing entries to include in report (default: 200)")
     p.add_argument("--remove-stale-lock", action="store_true", help="Remove .git/index.lock if present and considered stale")
     p.add_argument("--lock-wait-s", type=int, default=15, help="Seconds to wait for index.lock to clear (default: 15)")
+    p.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Run the runbook step-by-step: each git command waits for your confirmation on the terminal.",
+    )
     args = p.parse_args()
 
     repo_path = Path(args.repo_path)
     report_path = Path(args.report)
 
-    classification, report = investigate(
-        repo_path,
-        remote=args.remote,
-        refspec=args.refspec,
-        report_path=report_path,
-        max_missing=max(1, args.max_missing),
-        remove_stale_lock=bool(args.remove_stale_lock),
-        lock_wait_s=max(0, args.lock_wait_s),
-    )
+    if args.interactive:
+        classification, report = run_interactive_cli(
+            repo_path,
+            remote=args.remote,
+            refspec=args.refspec,
+            report_path=report_path,
+            max_missing=max(1, args.max_missing),
+            remove_stale_lock=bool(args.remove_stale_lock),
+            lock_wait_s=max(0, args.lock_wait_s),
+        )
+    else:
+        classification, report = investigate(
+            repo_path,
+            remote=args.remote,
+            refspec=args.refspec,
+            report_path=report_path,
+            max_missing=max(1, args.max_missing),
+            remove_stale_lock=bool(args.remove_stale_lock),
+            lock_wait_s=max(0, args.lock_wait_s),
+        )
     sys.stdout.write(_one_screen_summary(report))
     sys.exit(EXIT_CODES.get(classification, 50))
 

@@ -90,11 +90,19 @@ This repo also includes an unattended, runbook-aligned investigator that perform
 - optional `git lfs fsck` + `git lfs fetch --recent` + `git lfs pull` when LFS missing objects are detected
 - writes a JSON report
 
-Run:
+Run (all steps in one go, non-interactive):
 
 ```bash
 python src\investigate_lfs_push.py [repo_path] --remote origin --report lfs_check_report.json
 ```
+
+**Step-by-step with human confirmation** (each git command waits for Enter in the terminal; prints what will happen next before each step):
+
+```bash
+python src\investigate_lfs_push.py [repo_path] --interactive --remote origin --report lfs_check_report.json
+```
+
+The **GUI** (`src\lfs_checker.py`) adds **Runbook (step-by-step)…**: the same pipeline in a window, with options (remote, refspec, report path, lock handling) and **hover tooltips** on main buttons and on wizard controls.
 
 Or double-click:
 
