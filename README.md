@@ -16,26 +16,33 @@ A small Python app that checks a Git repo for **missing LFS objects** and shows 
 
 ```
 lfs_checker/
-├── RunMe.bat              # Quick launcher (double‑click to run GUI)
+├── Install LFS Checker.bat   # Main install entrypoint (same idea as InitGit)
+├── RunMe.bat                 # Quick launcher from repo (calls bin)
 ├── README.md
 ├── requirements.txt
-├── bin/                   # Launchers
+├── bin/                      # Dev launchers (repo-relative paths)
 │   ├── RunMe.bat
 │   ├── RunLfsChecker.bat
-│   └── RunLfsIdLookup.bat
-├── src/                   # Python app and CLIs
-│   ├── lfs_checker.py     # Main GUI
-│   ├── check_lfs.py       # CLI: missing + local not in LFS
-│   └── check_not_in_lfs.py # CLI: only "files not in LFS"
+│   ├── RunLfsIdLookup.bat
+│   └── RunInvestigateLfsPush.bat
+├── src/
+│   ├── lfs_checker.py
+│   ├── investigate_lfs_push.py
+│   ├── runbook_probe.py
+│   ├── runbook_interactive.py
+│   ├── runbook_wizard_gui.py
+│   ├── check_lfs.py
+│   └── check_not_in_lfs.py
 ├── scripts/
-│   └── FindLfsObject.ps1  # LFS object ID lookup (PowerShell GUI)
+│   └── FindLfsObject.ps1
 ├── assets/
-│   └── lfs.svg            # Logo (optional)
+│   └── lfs.svg
+├── docs/
 └── install/
     ├── Install-LFS-Checker.ps1
     ├── Install-LFS-Checker.bat
     ├── Add-LFS-Context-Menu.bat
-    └── Add_LFS_IdLookup_Context_Menu.reg  # Template
+    └── Add_LFS_IdLookup_Context_Menu.reg  # Template (installer also writes one into %LOCALAPPDATA%)
 ```
 
 ## Run it
@@ -119,11 +126,21 @@ Or double-click:
 
 ## Install (Windows)
 
-To install into `%LOCALAPPDATA%\LFS-Checker` and optionally add folder right‑click context menus:
+Same pattern as the **InitGit** installer in the companion repo (`initgit` next to this folder): from the **repo root**, double‑click **`Install LFS Checker.bat`**, or run:
 
-```bash
-install\Install-LFS-Checker.bat
+```cmd
+Install LFS Checker.bat
 ```
+
+That runs `install\Install-LFS-Checker.bat`, which invokes the PowerShell installer. It will:
+
+- Install or **replace** everything under `%LOCALAPPDATA%\LFS-Checker` (full `src\` tree, `scripts\`, `assets\`, `docs\`, `README.md`, `requirements.txt`)
+- **Generate** launchers there (`RunMe.bat`, `RunLfsChecker.bat`, `RunLfsIdLookup.bat`, `RunInvestigateLfsPush.bat`, `Add-LFS-Context-Menu.bat`) with paths pointing at the installed copy
+- Write `Add_LFS_IdLookup_Context_Menu.reg` and optionally merge it (UAC) for folder right‑click menus
+
+You can still run `install\Install-LFS-Checker.bat` directly if you prefer.
+
+After install, use **`%LOCALAPPDATA%\LFS-Checker\RunMe.bat`** (or the context menu) so Python loads modules from the installed `src` folder.
 
 ## Requirements
 

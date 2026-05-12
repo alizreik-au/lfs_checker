@@ -1,65 +1,152 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Installs LFS Checker and LFS Object Lookup to the user's AppData\Local\LFS-Checker.
+    Installs or updates LFS Checker to the user's AppData\Local\LFS-Checker.
+.DESCRIPTION
+    Mirrors the InitGit installer pattern: replaces the install folder on update, copies src (full tree),
+    scripts, assets, docs, generates launch .bat files with correct paths, and optionally merges the
+    folder context-menu .reg (UAC).
 #>
 
 $ErrorActionPreference = 'Stop'
-# Repo root is parent of this script's directory (install/)
-$script:SourceDir = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$script:SourceRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$script:SrcSource = Join-Path -Path $SourceRoot -ChildPath 'src'
 $InstallDir = Join-Path -Path $env:LOCALAPPDATA -ChildPath 'LFS-Checker'
-
-# Source paths (repo layout) -> flat destination name
-$CopyMap = @(
-    @{ Src = 'src\lfs_checker.py'; Dest = 'lfs_checker.py' },
-    @{ Src = 'src\check_lfs.py'; Dest = 'check_lfs.py' },
-    @{ Src = 'src\check_not_in_lfs.py'; Dest = 'check_not_in_lfs.py' },
-    @{ Src = 'scripts\FindLfsObject.ps1'; Dest = 'FindLfsObject.ps1' },
-    @{ Src = 'assets\lfs.svg'; Dest = 'lfs.svg' },
-    @{ Src = 'bin\RunMe.bat'; Dest = 'RunMe.bat' },
-    @{ Src = 'bin\RunLfsChecker.bat'; Dest = 'RunLfsChecker.bat' },
-    @{ Src = 'bin\RunLfsIdLookup.bat'; Dest = 'RunLfsIdLookup.bat' },
-    @{ Src = 'install\Add-LFS-Context-Menu.bat'; Dest = 'Add-LFS-Context-Menu.bat' },
-    @{ Src = 'requirements.txt'; Dest = 'requirements.txt' },
-    @{ Src = 'README.md'; Dest = 'README.md' }
-)
 
 Write-Host "LFS Checker Installer" -ForegroundColor Cyan
 Write-Host "=====================" -ForegroundColor Cyan
-Write-Host "Install to: $InstallDir" -ForegroundColor White
+Write-Host "Install/update to: $InstallDir" -ForegroundColor White
 Write-Host ""
 
-if (-not (Test-Path -LiteralPath $SourceDir -PathType Container)) {
-    Write-Error "Source directory not found: $SourceDir"
+if (-not (Test-Path -LiteralPath $SrcSource -PathType Container)) {
+    Write-Error "Source directory not found: $SrcSource"
     exit 1
 }
 
-# Create install directory
-if (-not (Test-Path -LiteralPath $InstallDir -PathType Container)) {
+if (Test-Path -LiteralPath $InstallDir -PathType Container) {
+    Write-Host "Updating existing installation: removing old files..." -ForegroundColor Gray
+    Get-ChildItem -LiteralPath $InstallDir -Force | Remove-Item -Recurse -Force
+    Write-Host "  Cleared: $InstallDir" -ForegroundColor Green
+} else {
     New-Item -Path $InstallDir -ItemType Directory -Force | Out-Null
     Write-Host "Created: $InstallDir" -ForegroundColor Green
-} else {
-    Write-Host "Directory exists: $InstallDir" -ForegroundColor Gray
 }
 
-# Copy files
-foreach ($entry in $CopyMap) {
-    $src = Join-Path -Path $SourceDir -ChildPath $entry.Src
-    if (Test-Path -LiteralPath $src -PathType Leaf) {
-        $dest = Join-Path -Path $InstallDir -ChildPath $entry.Dest
-        Copy-Item -LiteralPath $src -Destination $dest -Force
-        Write-Host "  Copied: $($entry.Dest)" -ForegroundColor Green
-    } else {
-        Write-Host "  Skipped (not found): $($entry.Src)" -ForegroundColor Yellow
+# --- Copy full src (Python modules + package layout for imports) ---
+$destSrc = Join-Path -Path $InstallDir -ChildPath 'src'
+New-Item -Path $destSrc -ItemType Directory -Force | Out-Null
+# Use -Path (not -LiteralPath): a trailing * must be treated as a wildcard so children are copied.
+Copy-Item -Path (Join-Path $SrcSource '*') -Destination $destSrc -Recurse -Force
+Write-Host "  Copied: src\" -ForegroundColor Green
+
+# --- Copy optional folders ---
+foreach ($folder in @('scripts', 'assets', 'docs')) {
+    $from = Join-Path -Path $SourceRoot -ChildPath $folder
+    if (Test-Path -LiteralPath $from -PathType Container) {
+        $to = Join-Path -Path $InstallDir -ChildPath $folder
+        New-Item -Path $to -ItemType Directory -Force | Out-Null
+        Copy-Item -Path (Join-Path $from '*') -Destination $to -Recurse -Force
+        Write-Host "  Copied: $folder\" -ForegroundColor Green
     }
 }
 
-# Write context menu .reg with installed path (backslashes doubled for .reg format)
+# --- Root docs at repo (optional) ---
+foreach ($leaf in @('requirements.txt', 'README.md')) {
+    $p = Join-Path -Path $SourceRoot -ChildPath $leaf
+    if (Test-Path -LiteralPath $p -PathType Leaf) {
+        Copy-Item -LiteralPath $p -Destination (Join-Path $InstallDir $leaf) -Force
+        Write-Host "  Copied: $leaf" -ForegroundColor Green
+    }
+}
+
+# --- Generated launchers (paths relative to install dir) ---
+$batRunLfsChecker = @"
+@echo off
+cd /d "%~dp0"
+set "REPO=%~1"
+if "%REPO%"=="" (
+    python "%~dp0src\lfs_checker.py"
+) else (
+    python "%~dp0src\lfs_checker.py" "%REPO%"
+)
+if errorlevel 1 pause
+"@
+Set-Content -LiteralPath (Join-Path $InstallDir 'RunLfsChecker.bat') -Value $batRunLfsChecker -Encoding ASCII
+Write-Host "  Created: RunLfsChecker.bat" -ForegroundColor Green
+
+$batRunMe = @"
+@echo off
+cd /d "%~dp0"
+python "%~dp0src\lfs_checker.py"
+if errorlevel 1 pause
+"@
+Set-Content -LiteralPath (Join-Path $InstallDir 'RunMe.bat') -Value $batRunMe -Encoding ASCII
+Write-Host "  Created: RunMe.bat" -ForegroundColor Green
+
+$batInvestigate = @"
+@echo off
+cd /d "%~dp0"
+set "REPO=%~1"
+if "%REPO%"=="" (
+    python "%~dp0src\investigate_lfs_push.py"
+) else (
+    python "%~dp0src\investigate_lfs_push.py" "%REPO%"
+)
+if errorlevel 1 pause
+"@
+Set-Content -LiteralPath (Join-Path $InstallDir 'RunInvestigateLfsPush.bat') -Value $batInvestigate -Encoding ASCII
+Write-Host "  Created: RunInvestigateLfsPush.bat" -ForegroundColor Green
+
+$batIdLookup = @"
+@echo off
+cd /d "%~dp0"
+set "SCRIPT=%~dp0scripts\FindLfsObject.ps1"
+set "REPO=%~1"
+if "%REPO%"=="" (
+    start "LFS Object Lookup" cmd /k "cd /d ""%~dp0"" && powershell -NoProfile -ExecutionPolicy Bypass -File ""%SCRIPT%"""
+    exit /b 0
+)
+if "%~2"=="" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -RepoPath "%REPO%"
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -RepoPath "%REPO%" -OID "%~2"
+)
+if errorlevel 1 pause
+"@
+Set-Content -LiteralPath (Join-Path $InstallDir 'RunLfsIdLookup.bat') -Value $batIdLookup -Encoding ASCII
+Write-Host "  Created: RunLfsIdLookup.bat" -ForegroundColor Green
+
+# --- Context menu: merge helper (same idea as InitGit) ---
+$batAddContext = @"
+@echo off
+set "REGFILE=%LOCALAPPDATA%\LFS-Checker\Add_LFS_IdLookup_Context_Menu.reg"
+if not exist "%REGFILE%" (
+    echo Add_LFS_IdLookup_Context_Menu.reg not found at %REGFILE%
+    echo Run "Install LFS Checker.bat" from the repo root first to install and create the reg file.
+    pause
+    exit /b 1
+)
+echo Adding LFS context menus (Find LFS object by ID + Run LFS Checker^)...
+echo You may be prompted for Administrator approval.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath 'reg.exe' -ArgumentList 'import', \"\"\"%REGFILE%\"\"\" -Verb RunAs -Wait"
+if errorlevel 1 (
+    echo Failed. Right-click Add_LFS_IdLookup_Context_Menu.reg and choose Merge, then accept UAC.
+    pause
+    exit /b 1
+)
+echo Done.
+echo On Windows 11: right-click a folder (or empty area), then "Show more options" to see the LFS entries.
+pause
+"@
+Set-Content -LiteralPath (Join-Path $InstallDir 'Add-LFS-Context-Menu.bat') -Value $batAddContext -Encoding ASCII
+Write-Host "  Created: Add-LFS-Context-Menu.bat" -ForegroundColor Green
+
+# --- Registry fragment (paths doubled for .reg) ---
 $regPath = $InstallDir -replace '\\', '\\\\'
 $regContent = @"
 Windows Registry Editor Version 5.00
 
-; "Find LFS object by ID" - when right-clicking a folder OR when right-clicking in the empty area inside a folder
+; "Find LFS object by ID" - folder or background
 
 [HKEY_CLASSES_ROOT\Folder\shell\LFS_IdLookup]
 @="Find LFS object by ID"
@@ -76,7 +163,7 @@ Windows Registry Editor Version 5.00
 [HKEY_CLASSES_ROOT\Directory\Background\shell\LFS_IdLookup\command]
 @="\"$regPath\\\\RunLfsIdLookup.bat\" \"%V\""
 
-; "Run LFS Checker" - open LFS Checker GUI with this folder as repo (folder or background)
+; "Run LFS Checker"
 
 [HKEY_CLASSES_ROOT\Folder\shell\LFS_Checker]
 @="Run LFS Checker"
@@ -96,6 +183,17 @@ Windows Registry Editor Version 5.00
 $regFile = Join-Path -Path $InstallDir -ChildPath 'Add_LFS_IdLookup_Context_Menu.reg'
 Set-Content -LiteralPath $regFile -Value $regContent -Encoding ASCII
 Write-Host "  Created: Add_LFS_IdLookup_Context_Menu.reg (points to $InstallDir)" -ForegroundColor Green
+
+# --- Optional: restore default double-click = open folder (if another tool broke it) ---
+$fixFolderOpenReg = @"
+Windows Registry Editor Version 5.00
+
+[HKEY_CLASSES_ROOT\Folder\shell]
+@="open"
+"@
+$fixFolderOpenFile = Join-Path -Path $InstallDir -ChildPath 'Fix-Folder-Open.reg'
+Set-Content -LiteralPath $fixFolderOpenFile -Value $fixFolderOpenReg -Encoding ASCII
+Write-Host "  Created: Fix-Folder-Open.reg (merge if double-click on folder runs a script instead of opening)" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "Installation complete." -ForegroundColor Green
@@ -119,9 +217,9 @@ if ($addContext -ne 'n' -and $addContext -ne 'N') {
 
 Write-Host ""
 Write-Host "Installed location: $InstallDir" -ForegroundColor Cyan
-Write-Host "  - Run LFS Checker: RunMe.bat" -ForegroundColor Gray
-Write-Host "  - Run LFS Object Lookup: RunLfsIdLookup.bat" -ForegroundColor Gray
-Write-Host "  - Run LFS Checker (GUI): RunLfsChecker.bat or RunMe.bat" -ForegroundColor Gray
+Write-Host "  - GUI: RunMe.bat or RunLfsChecker.bat" -ForegroundColor Gray
+Write-Host "  - Runbook CLI: RunInvestigateLfsPush.bat (add --interactive for step-by-step)" -ForegroundColor Gray
+Write-Host "  - LFS object lookup: RunLfsIdLookup.bat" -ForegroundColor Gray
 Write-Host "  - Re-add context menu: Add-LFS-Context-Menu.bat" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Windows 11: The entry appears under 'Show more options' when you right-click a folder." -ForegroundColor Yellow
